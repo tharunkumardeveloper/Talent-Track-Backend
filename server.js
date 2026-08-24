@@ -7,7 +7,9 @@ const { spawn } = require('child_process');
 const csv = require('csv-parser');
 const ffmpeg = require('fluent-ffmpeg');
 const sharp = require('sharp');
+const http = require('http');
 const { connectDB, getDB } = require('./db');
+const { attachCollab } = require('./collab');
 
 // Try to set ffmpeg path
 try {
@@ -691,8 +693,12 @@ async function startServer() {
     await connectDB();
     console.log('✅ MongoDB connected successfully');
 
-    // Then start the server
-    app.listen(PORT, () => {
+    // Then start the server. Created explicitly (rather than via app.listen)
+    // because the collab WebSocket server needs to attach to the http.Server
+    // and share the same port as the REST API.
+    const httpServer = http.createServer(app);
+    attachCollab(httpServer, app);
+    httpServer.listen(PORT, () => {
       console.log(`✅ Workout processor server running on port ${PORT}`);
       console.log(`📡 API endpoints available at http://localhost:${PORT}/api`);
     });
@@ -700,8 +706,11 @@ async function startServer() {
     console.error('❌ Failed to connect to MongoDB:', error.message);
     console.log('⚠️  Starting server without database connection...');
     
-    // Start server anyway (will use localStorage fallback)
-    app.listen(PORT, () => {
+    // Start server anyway (will use localStorage fallback). Collab rooms are
+    // in-memory, so they work with no database at all.
+    const httpServer = http.createServer(app);
+    attachCollab(httpServer, app);
+    httpServer.listen(PORT, () => {
       console.log(`⚠️  Server running on port ${PORT} (MongoDB unavailable)`);
     });
   }
