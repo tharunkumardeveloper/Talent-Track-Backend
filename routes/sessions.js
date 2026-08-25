@@ -312,4 +312,142 @@ router.delete("/:sessionId", async (req, res) => {
   }
 });
 
+
+// Ported from the previously-deployed backend (rec-backend-main). The
+// frontend calls this route, so dropping it would break live pages.
+router.get("/user/:userId", async (req, res) => {
+  try {
+    const db = getDB();
+    const { userId } = req.params;
+
+    console.log('📊 Fetching workouts for userId:', userId);
+
+    // First, get the user to find their name
+    const user = await db.collection("users").findOne({ userId });
+    console.log('👤 User found:', user ? user.name : 'Not found');
+    
+    // Search by athleteId, exact athleteName match, or partial name match
+    // This handles cases where workout has "Tharun" but user is "Tharun Kumar"
+    const query = user 
+      ? { 
+          $or: [
+            { athleteId: userId }, 
+            { athleteName: user.name },
+            { athleteName: { $regex: new RegExp(user.name.split(' ')[0], 'i') } } // Match first name
+          ] 
+        }
+      : { athleteId: userId };
+
+    console.log('🔍 Query:', JSON.stringify(query));
+
+    const workouts = await db.collection("workout_sessions")
+      .find(query)
+      .sort({ timestamp: -1 })
+      .toArray();
+
+    console.log(`✅ Found ${workouts.length} workouts for user ${userId}`);
+    
+    // If no workouts found, let's check what names exist in workouts
+    if (workouts.length === 0 && user) {
+      const allWorkouts = await db.collection("workout_sessions")
+        .find({})
+        .limit(5)
+        .toArray();
+      console.log('📋 Sample workout names:', allWorkouts.map(w => ({ name: w.athleteName, id: w.athleteId })));
+    }
+
+    // Fetch rep images for each workout
+    const workoutsWithReps = await Promise.all(
+      workouts.map(async (workout) => {
+        const reps = await db.collection("rep_images")
+          .find({ sessionId: workout._id.toString() })
+          .sort({ repNumber: 1 })
+          .toArray();
+        
+        return {
+          ...workout,
+          screenshots: reps.map(rep => rep.imageUrl),
+          repDetails: reps.map(rep => ({
+            rep: rep.repNumber,
+            correct: rep.correct,
+            ...rep.details
+          }))
+        };
+      })
+    );
+
+    res.status(200).json({
+      success: true,
+      workouts: workoutsWithReps,
+      count: workoutsWithReps.length
+    });
+
+  } catch (err) {
+    console.error('❌ Error fetching workouts:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Error fetching workouts',
+      details: err.message,
+      workouts: [] // Return empty array on error
+    });
+  }
+});
+
+// Ported from the previously-deployed backend (rec-backend-main). The
+// frontend calls this route, so dropping it would break live pages.
+router.get("/:sessionId", async (req, res) => {
+  try {
+    const db = getDB();
+    const { sessionId } = req.params;
+
+    console.log('📊 Fetching workout session:', sessionId);
+
+    // Validate sessionId
+    if (!ObjectId.isValid(sessionId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid session ID'
+      });
+    }
+
+    const workout = await db.collection("workout_sessions")
+      .findOne({ _id: new ObjectId(sessionId) });
+
+    if (!workout) {
+      return res.status(404).json({
+        success: false,
+        error: 'Workout not found'
+      });
+    }
+
+    // Fetch rep images for this workout
+    const reps = await db.collection("rep_images")
+      .find({ sessionId: workout._id.toString() })
+      .sort({ repNumber: 1 })
+      .toArray();
+
+    console.log(`✅ Found workout with ${reps.length} rep images`);
+
+    const workoutWithReps = {
+      ...workout,
+      screenshots: reps.map(rep => rep.imageUrl),
+      repDetails: reps.map(rep => ({
+        rep: rep.repNumber,
+        correct: rep.correct,
+        ...rep.details
+      }))
+    };
+
+    res.status(200).json(workoutWithReps);
+
+  } catch (err) {
+    console.error('❌ Error fetching workout:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Error fetching workout',
+      details: err.message
+    });
+  }
+});
+
 module.exports = router;

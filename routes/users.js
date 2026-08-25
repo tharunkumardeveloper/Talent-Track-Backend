@@ -242,4 +242,37 @@ router.get("/athletes", async (req, res) => {
   }
 });
 
+
+// Ported from the previously-deployed backend (rec-backend-main). The
+// frontend calls this route, so dropping it would break live pages.
+router.get("/:userId", async (req, res) => {
+  try {
+    const db = getDB();
+    const { userId } = req.params;
+
+    console.log('📊 Fetching user:', userId);
+
+    const user = await db.collection("users").findOne({ userId });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    console.log('✅ User found:', user.name);
+
+    res.status(200).json(user);
+
+  } catch (err) {
+    console.error('❌ Error fetching user:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Error fetching user',
+      details: err.message
+    });
+  }
+});
+
 module.exports = router;
