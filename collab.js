@@ -204,6 +204,22 @@ function handleMessage(ws, raw) {
       break;
     }
 
+    // ---- live skeleton ----
+    case 'pose': {
+      // Relayed, never stored. Landmarks arrive quantised to int16 and packed
+      // into a plain array, so a frame is ~200 bytes - two orders of magnitude
+      // cheaper than video, and it works for peers whose WebRTC never connects
+      // (carrier NAT), which is precisely when seeing each other matters most.
+      if (!Array.isArray(msg.p) || msg.p.length > 128) return;
+      broadcast(
+        room,
+        'peer-pose',
+        { peerId: self.peerId, p: msg.p, t: msg.t },
+        self.peerId,
+      );
+      break;
+    }
+
     // ---- host controls ----
     case 'start': {
       if (!self.isHost) return;
