@@ -2,13 +2,25 @@ const { MongoClient } = require("mongodb");
 require('dotenv').config();
 
 // MongoDB connection URI - use environment variable or default
-const uri = process.env.MONGODB_URI || "mongodb+srv://<username>:<password>@cluster0.rzbfab5.mongodb.net/?appName=Cluster0";
+// No fallback: a missing MONGODB_URI should fail loudly at boot rather than
+// silently attempting to connect to a cluster baked into the source.
+const uri = process.env.MONGODB_URI;
 
-const client = new MongoClient(uri);
+if (!uri) {
+  // Fail with something actionable. `new MongoClient(undefined)` throws at
+  // module load with an opaque message, before server.js can catch it and fall
+  // back to running without a database.
+  console.error('MONGODB_URI is not set.');
+  console.error('Set it in the environment (Render dashboard) or a local .env file.');
+  console.error('See .env.example for the expected format.');
+}
+
+const client = uri ? new MongoClient(uri) : null;
 
 let db;
 
 async function connectDB() {
+  if (!client) throw new Error('MONGODB_URI is not configured');
   try {
     await client.connect();
     db = client.db("talenttrack");

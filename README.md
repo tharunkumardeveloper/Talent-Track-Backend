@@ -16,7 +16,7 @@ cp .env.example .env
 
 3. Update `.env` with your MongoDB credentials:
 ```env
-MONGODB_URI=mongodb+srv://talenttrack_user:YourPassword@cluster0.rzbfab5.mongodb.net/talenttrack?retryWrites=true&w=majority
+MONGODB_URI=mongodb+srv://<username>:<password>@<your-cluster>.mongodb.net/talenttrack?retryWrites=true&w=majority
 PORT=3001
 ```
 
