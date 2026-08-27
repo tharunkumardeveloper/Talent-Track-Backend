@@ -10,6 +10,7 @@ const sharp = require('sharp');
 const http = require('http');
 const { connectDB, getDB } = require('./db');
 const { attachCollab } = require('./collab');
+const chatRouter = require('./routes/chat');
 
 // Try to set ffmpeg path
 try {
@@ -677,6 +678,8 @@ app.use('/api/auth', authRouter);
 app.use('/api', verificationRouter);
 app.use('/api', connectionsRouter);
 app.use('/api/db', dbUtilsRouter);
+// Groq proxy: keeps the API key server-side instead of shipping it in the APK.
+app.use('/api', chatRouter);
 
 // Legacy endpoint for backward compatibility
 app.post('/api/save-workout', async (req, res) => {
