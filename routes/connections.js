@@ -1,14 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const { ObjectId } = require('mongodb');
+const { getDB } = require('../db');
 
-// Social connections routes - Updated 2026-02-21
-// Handles user discovery, connection requests, and relationship management
+// Social connections routes.
+// Handles user discovery, connection requests, and relationship management.
+//
+// These handlers read the database through getDB(), as every other route file
+// does. They previously read req.app.locals.db, which server.js never assigns -
+// so `db` was undefined, the first db.collection() call threw, and every
+// endpoint answered 500. The app reported that as "cannot reach the server",
+// which was true from its side and hid a mistake that was entirely local.
 
 // Debug endpoint - Get all users
 router.get('/users/all', async (req, res) => {
   try {
-    const db = req.app.locals.db;
+    const db = getDB();
     const users = await db.collection('users').find({}).limit(50).toArray();
     console.log('📊 All users:', users.length);
     res.json(users);
@@ -22,7 +29,7 @@ router.get('/users/all', async (req, res) => {
 router.get('/users/discover', async (req, res) => {
   try {
     const { userId } = req.query;
-    const db = req.app.locals.db;
+    const db = getDB();
 
     if (!userId) {
       return res.status(400).json({ error: 'userId is required' });
@@ -68,7 +75,7 @@ router.get('/users/discover', async (req, res) => {
 router.get('/connections/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    const db = req.app.locals.db;
+    const db = getDB();
 
     const connections = await db.collection('connections').find({
       $or: [
@@ -97,7 +104,7 @@ router.get('/connections/:userId', async (req, res) => {
 router.get('/connections/requests/pending/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    const db = req.app.locals.db;
+    const db = getDB();
 
     const requests = await db.collection('connections').find({
       toUserId: userId,
@@ -130,7 +137,7 @@ router.get('/connections/requests/pending/:userId', async (req, res) => {
 router.get('/connections/requests/sent/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    const db = req.app.locals.db;
+    const db = getDB();
 
     const requests = await db.collection('connections').find({
       fromUserId: userId,
@@ -161,7 +168,7 @@ router.get('/connections/requests/sent/:userId', async (req, res) => {
 router.post('/connections/request', async (req, res) => {
   try {
     const { fromUserId, toUserId } = req.body;
-    const db = req.app.locals.db;
+    const db = getDB();
 
     // Check if request already exists
     const existing = await db.collection('connections').findOne({
@@ -194,7 +201,7 @@ router.post('/connections/request', async (req, res) => {
 router.post('/connections/request/:requestId/accept', async (req, res) => {
   try {
     const { requestId } = req.params;
-    const db = req.app.locals.db;
+    const db = getDB();
 
     await db.collection('connections').updateOne(
       { _id: new ObjectId(requestId) },
@@ -217,7 +224,7 @@ router.post('/connections/request/:requestId/accept', async (req, res) => {
 router.post('/connections/request/:requestId/reject', async (req, res) => {
   try {
     const { requestId } = req.params;
-    const db = req.app.locals.db;
+    const db = getDB();
 
     await db.collection('connections').updateOne(
       { _id: new ObjectId(requestId) },
@@ -240,7 +247,7 @@ router.post('/connections/request/:requestId/reject', async (req, res) => {
 router.get('/connections/status/:userId1/:userId2', async (req, res) => {
   try {
     const { userId1, userId2 } = req.params;
-    const db = req.app.locals.db;
+    const db = getDB();
 
     const connection = await db.collection('connections').findOne({
       $or: [
@@ -264,7 +271,7 @@ router.get('/connections/status/:userId1/:userId2', async (req, res) => {
 router.get('/users/:userId/stats', async (req, res) => {
   try {
     const { userId } = req.params;
-    const db = req.app.locals.db;
+    const db = getDB();
 
     const sessions = await db.collection('workout_sessions').find({ athleteId: userId }).toArray();
 
@@ -292,7 +299,7 @@ router.post('/users/:userId/skills', async (req, res) => {
   try {
     const { userId } = req.params;
     const { skills } = req.body;
-    const db = req.app.locals.db;
+    const db = getDB();
 
     await db.collection('users').updateOne(
       { userId },
