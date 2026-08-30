@@ -271,28 +271,63 @@ router.get('/connections/status/:userId1/:userId2', async (req, res) => {
 router.get('/users/:userId/stats', async (req, res) => {
   try {
     const { userId } = req.params;
+    const { name } = req.query;
     const db = getDB();
 
-    const sessions = await db.collection('workout_sessions').find({ athleteId: userId }).toArray();
+    // Matched on either key. Sessions were keyed by athleteName long before
+    // anything wrote athleteId, so querying on the id alone returned nothing
+    // for every athlete who trained before that changed - which was all of
+    // them, since nothing ever wrote it.
+    const match = name
+      ? { $or: [{ athleteId: userId }, { athleteName: name }] }
+      : { athleteId: userId };
 
-    const stats = {
+    const sessions = await db.collection('workout_sessions').find(match).toArray();
+
+    const totalReps = sessions.reduce((sum, s) => sum + (s.totalReps || 0), 0);
+
+    res.json({
       totalWorkouts: sessions.length,
-      bestScore: Math.max(...sessions.map(s => s.totalReps || 0), 0),
-      avgAccuracy: sessions.length > 0 
+      totalReps,
+      bestScore: Math.max(...sessions.map((s) => s.totalReps || 0), 0),
+      avgAccuracy: sessions.length
         ? Math.round(sessions.reduce((sum, s) => sum + (s.accuracy || 0), 0) / sessions.length)
         : 0,
-      formQuality: sessions.length > 0
-        ? Math.round(sessions.filter(s => s.formScore === 'Excellent').length / sessions.length * 100)
+      formQuality: sessions.length
+        ? Math.round(
+            (sessions.filter((s) => s.formScore === 'Excellent').length / sessions.length) * 100,
+          )
         : 0,
-      consistency: sessions.length >= 5 ? 85 : sessions.length * 15
-    };
-
-    res.json(stats);
+      // Days actually trained in the last fortnight.
+      //
+      // This used to be `sessions.length >= 5 ? 85 : sessions.length * 15` - a
+      // number with no measurement behind it, which reported 85% consistency to
+      // anyone with five sessions however long ago they were.
+      consistency: consistencyPct(sessions),
+      lastWorkout: sessions.length
+        ? sessions.map((s) => s.timestamp).sort().reverse()[0]
+        : null,
+    });
   } catch (error) {
     console.error('Error fetching user stats:', error);
     res.status(500).json({ error: 'Failed to fetch stats' });
   }
 });
+
+/** Share of the last 14 days on which the athlete recorded at least one set. */
+function consistencyPct(sessions) {
+  const WINDOW_DAYS = 14;
+  const cutoff = Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+  const days = new Set(
+    sessions
+      .map((s) => new Date(s.timestamp).getTime())
+      .filter((t) => Number.isFinite(t) && t >= cutoff)
+      .map((t) => new Date(t).toISOString().slice(0, 10)),
+  );
+
+  return Math.round((days.size / WINDOW_DAYS) * 100);
+}
 
 // Update user skills
 router.post('/users/:userId/skills', async (req, res) => {
