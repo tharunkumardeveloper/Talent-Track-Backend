@@ -4,6 +4,48 @@ const { getDB } = require("../db");
 const { uploadImage } = require("../utils/cloudinary");
 const crypto = require("crypto");
 const { OAuth2Client } = require("google-auth-library");
+const bcrypt = require("bcryptjs");
+
+/**
+ * Cost factor for password hashing.
+ *
+ * 10 is roughly 100ms on Render's free tier - slow enough to make offline
+ * guessing expensive, fast enough that a login does not feel stalled. Raising
+ * it later is safe: the cost is stored inside each hash, so old hashes keep
+ * verifying and only new ones get the higher factor.
+ */
+const BCRYPT_ROUNDS = 10;
+
+/** bcrypt hashes all start with $2a$, $2b$ or $2y$ followed by the cost. */
+function isHashed(value) {
+  return typeof value === 'string' && /^\$2[aby]\$/.test(value);
+}
+
+/**
+ * Checks a password, upgrading it from plaintext on the way through.
+ *
+ * Accounts predating hashing hold the password as typed. Rejecting them would
+ * lock out every existing user, and rehashing them all in one pass is not
+ * possible - the plaintext is the only thing that can produce the hash, and it
+ * is only in hand at the moment someone signs in. So the first correct login
+ * after this deploy silently replaces the stored value with a hash, and no
+ * account is ever locked out or left in plaintext once its owner returns.
+ */
+async function verifyPassword(db, user, candidate) {
+  if (isHashed(user.password)) {
+    return bcrypt.compare(candidate, user.password);
+  }
+
+  if (user.password !== candidate) return false;
+
+  const hash = await bcrypt.hash(candidate, BCRYPT_ROUNDS);
+  await db.collection("users").updateOne(
+    { userId: user.userId },
+    { $set: { password: hash, updatedAt: new Date() } }
+  );
+  console.log('🔒 Upgraded stored password to a hash:', user.userId);
+  return true;
+}
 
 /**
  * Google token verifier.
@@ -58,12 +100,14 @@ router.post("/signup", async (req, res) => {
       }
     }
 
-    // Create user profile (store password as plain text for now - in production use bcrypt)
     const newUser = {
       userId,
       name,
       email,
-      password, // In production, hash this with bcrypt
+      // Hashed, never stored as typed. People reuse passwords across sites, so
+      // a readable copy here is a liability for accounts that have nothing to
+      // do with this app.
+      password: await bcrypt.hash(password, BCRYPT_ROUNDS),
       phone: phone || '',
       role,
       profilePic: profilePicUrl,
@@ -123,8 +167,16 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // Check password (in production, use bcrypt.compare)
-    if (user.password !== password) {
+    // A Google-created account has no password, so there is nothing to check
+    // against - and comparing would otherwise let an empty value through.
+    if (!user.password) {
+      return res.status(401).json({
+        success: false,
+        error: 'This account signs in with Google'
+      });
+    }
+
+    if (!(await verifyPassword(db, user, password))) {
       return res.status(401).json({
         success: false,
         error: 'Invalid password'

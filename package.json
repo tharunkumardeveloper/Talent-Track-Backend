@@ -13,6 +13,7 @@
     "test:db": "node test-mongodb.js"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "child_process": "^1.0.2",
     "cloudinary": "^2.9.0",
     "cors": "^2.8.5",
