@@ -148,6 +148,59 @@ function handleMessage(ws, raw) {
     const room = rooms.get((msg.code || '').toUpperCase());
     if (!room) return send(ws, 'error', { message: 'Room not found', fatal: true });
 
+    // ---- reconnecting into a slot this client already holds ----
+    //
+    // A dropped connection used to mint a brand new peerId, so the athlete
+    // reappeared as a second participant with zero reps while their original
+    // tile lingered until the server noticed the dead socket. Their score for
+    // the set was simply gone.
+    //
+    // The token is minted per join and known only to that client, so it proves
+    // the claim without anyone being able to take over another athlete's slot
+    // by guessing a peerId.
+    if (msg.resumeToken) {
+      const existing = [...room.participants.values()].find(
+        (p) => p.resumeToken === msg.resumeToken,
+      );
+
+      if (existing) {
+        // Close the stale socket rather than leaving two attached to one slot.
+        if (existing.ws && existing.ws !== ws && existing.ws.readyState === 1) {
+          try {
+            existing.ws.close();
+          } catch {
+            /* already gone */
+          }
+        }
+
+        existing.ws = ws;
+        ws.peerId = existing.peerId;
+        ws.roomCode = room.code;
+        room.emptySince = null;
+
+        send(ws, 'joined', {
+          peerId: existing.peerId,
+          resumeToken: existing.resumeToken,
+          room: roomSnapshot(room),
+          resumed: true,
+        });
+        broadcast(room, 'room-state', { room: roomSnapshot(room) });
+        return;
+      }
+    }
+
+    // ---- a session already under way ----
+    //
+    // The server used to admit a latecomer and then never send them
+    // session-start, so they sat in the waiting room watching nothing while
+    // everyone else trained. Refusing says what happened.
+    if (room.startedAt && Date.now() >= room.startedAt) {
+      return send(ws, 'error', {
+        message: 'This session has already started',
+        fatal: true,
+      });
+    }
+
     if (room.participants.size >= MAX_PARTICIPANTS) {
       return send(ws, 'error', { message: 'Room is full', fatal: true });
     }
@@ -156,6 +209,8 @@ function handleMessage(ws, raw) {
     const participant = {
       peerId,
       ws,
+      // Proves a later reconnection is the same client.
+      resumeToken: crypto.randomUUID(),
       name: (msg.name || 'Athlete').slice(0, 32),
       isHost: room.participants.size === 0,
       reps: 0,
@@ -170,7 +225,11 @@ function handleMessage(ws, raw) {
     ws.roomCode = room.code;
 
     // The joiner learns who is already here; existing peers learn about them.
-    send(ws, 'joined', { peerId, room: roomSnapshot(room) });
+    send(ws, 'joined', {
+      peerId,
+      resumeToken: participant.resumeToken,
+      room: roomSnapshot(room),
+    });
     broadcast(room, 'peer-joined', { peerId, name: participant.name }, peerId);
     broadcast(room, 'room-state', { room: roomSnapshot(room) });
     return;
