@@ -3,6 +3,18 @@ const router = express.Router();
 const { getDB } = require("../db");
 const { uploadImage } = require("../utils/cloudinary");
 const crypto = require("crypto");
+const { OAuth2Client } = require("google-auth-library");
+
+/**
+ * Google token verifier.
+ *
+ * The audience is the Web client ID: Google mints ID tokens for that client
+ * even when the sign-in happened natively on Android, so it is the value the
+ * token must be checked against regardless of platform.
+ */
+const googleClient = process.env.GOOGLE_CLIENT_ID
+  ? new OAuth2Client(process.env.GOOGLE_CLIENT_ID)
+  : null;
 
 // POST /api/auth/signup - Create new user account
 router.post("/signup", async (req, res) => {
@@ -139,6 +151,120 @@ router.post("/login", async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error logging in',
+      details: err.message
+    });
+  }
+});
+
+// POST /api/auth/google - Sign in or sign up with a Google ID token
+//
+// The token is verified here rather than trusted from the client. That is the
+// whole point of this endpoint: a client can read a JWT's contents but cannot
+// meaningfully verify them, so anything decoded on a device is only as
+// trustworthy as the device. Verifying against Google's public keys proves the
+// token was issued by Google, for this app, and has not expired.
+//
+// It also removes the password workaround. The app previously represented a
+// Google account as an email-and-password pair derived from the account id,
+// because that was the only shape this API accepted.
+router.post("/google", async (req, res) => {
+  try {
+    if (!googleClient) {
+      return res.status(503).json({
+        success: false,
+        error: 'Google sign-in is not configured on the server'
+      });
+    }
+
+    const db = getDB();
+    const { idToken, role } = req.body;
+
+    if (!idToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'idToken is required'
+      });
+    }
+
+    let payload;
+    try {
+      const ticket = await googleClient.verifyIdToken({
+        idToken,
+        audience: process.env.GOOGLE_CLIENT_ID
+      });
+      payload = ticket.getPayload();
+    } catch (err) {
+      console.error('❌ Google token verification failed:', err.message);
+      return res.status(401).json({
+        success: false,
+        error: 'Google sign-in could not be verified'
+      });
+    }
+
+    // An unverified address could be one the holder does not actually own,
+    // which would let them claim an existing account by signing up with it.
+    if (!payload || !payload.email || payload.email_verified === false) {
+      return res.status(401).json({
+        success: false,
+        error: 'Google account has no verified email address'
+      });
+    }
+
+    const email = payload.email;
+    const googleId = payload.sub;
+
+    let user = await db.collection("users").findOne({ email });
+
+    if (user) {
+      // Link the Google identity on first use, so a later change of email
+      // address on either side can still be reconciled.
+      if (!user.googleId) {
+        await db.collection("users").updateOne(
+          { email },
+          { $set: { googleId, updatedAt: new Date() } }
+        );
+      }
+      console.log('✅ Google sign-in:', user.userId);
+    } else {
+      const assignedRole = role || 'ATHLETE';
+      const userId = `${assignedRole.toLowerCase()}_${crypto.randomBytes(8).toString('hex')}`;
+
+      user = {
+        userId,
+        name: payload.name || email.split('@')[0],
+        email,
+        // No password field at all. This account is proven by Google, and
+        // inventing a password for it would create a second, weaker way in.
+        googleId,
+        phone: '',
+        role: assignedRole,
+        profilePic: payload.picture || '',
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      await db.collection("users").insertOne(user);
+      console.log('✅ Google account created:', userId);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Google sign-in successful',
+      user: {
+        userId: user.userId,
+        name: user.name,
+        email: user.email,
+        phone: user.phone || '',
+        role: user.role,
+        profilePic: user.profilePic || ''
+      }
+    });
+
+  } catch (err) {
+    console.error('❌ Google sign-in error:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Google sign-in failed',
       details: err.message
     });
   }
