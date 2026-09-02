@@ -12,19 +12,6 @@ const { getDB } = require('../db');
 // endpoint answered 500. The app reported that as "cannot reach the server",
 // which was true from its side and hid a mistake that was entirely local.
 
-// Debug endpoint - Get all users
-router.get('/users/all', async (req, res) => {
-  try {
-    const db = getDB();
-    const users = await db.collection('users').find({}).limit(50).toArray();
-    console.log('📊 All users:', users.length);
-    res.json(users);
-  } catch (error) {
-    console.error('Error fetching all users:', error);
-    res.status(500).json({ error: 'Failed to fetch users' });
-  }
-});
-
 // Get users to discover (exclude self and existing connections)
 router.get('/users/discover', async (req, res) => {
   try {
@@ -56,10 +43,15 @@ router.get('/users/discover', async (req, res) => {
 
     console.log('🔗 Connected user IDs:', connectedUserIds);
 
-    // Get all users except self and connected users
+    // Everyone except me and the people I am already connected to.
+    //
+    // `userId: { $type: 'string' }` is not redundant: one account predates the
+    // id scheme and has no userId at all, and a missing field satisfies both
+    // $ne and $nin - so it came back, rendered a row with no key, and offered a
+    // Connect button that would have posted a null id.
     const users = await db.collection('users').find({
-      userId: { $ne: userId, $nin: connectedUserIds }
-    }).limit(50).toArray();
+      userId: { $type: 'string', $ne: userId, $nin: connectedUserIds }
+    }).limit(200).toArray();
 
     console.log('✅ Found discoverable users:', users.length);
     console.log('📋 Discoverable user names:', users.map(u => u.name));

@@ -245,7 +245,23 @@ router.get("/athletes", async (req, res) => {
 
 // Ported from the previously-deployed backend (rec-backend-main). The
 // frontend calls this route, so dropping it would break live pages.
-router.get("/:userId", async (req, res) => {
+/**
+ * A single user by id.
+ *
+ * Last on purpose: a one-segment pattern this loose swallows anything under
+ * /api/users that no route above claimed. That is not only this file's problem,
+ * because connections.js also serves /api/users/* and is mounted after this
+ * router - so /api/users/discover arrived here, was read as a user whose id is
+ * the word "discover", and answered 404. The Discover tab has been empty ever
+ * since, reporting a server it could reach perfectly well.
+ *
+ * Anything a later router owns is listed here and passed on with next().
+ */
+const RESERVED_USER_PATHS = new Set(['discover']);
+
+router.get("/:userId", async (req, res, next) => {
+  if (RESERVED_USER_PATHS.has(req.params.userId)) return next();
+
   try {
     const db = getDB();
     const { userId } = req.params;
